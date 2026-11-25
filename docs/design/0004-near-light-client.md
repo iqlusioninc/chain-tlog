@@ -59,7 +59,7 @@ The observation's `head` is `H`'s height and timestamp. The proven state is the 
    That node is still untrusted, but someone has to run it. A custom proof endpoint is the
    alternative.
 2. **Code hash and access-key lock can't be proven from stock RPC.** `view_state` proofs cover
-   contract storage, and may not include the account record. No RPC method returns a proof
+   contract storage only; the mainnet fixtures confirm the account record is not in them. No RPC method returns a proof
    for the account record or the access-key subtree. The verifier can check both
    (`VerifiedState::code_hash`, `VerifiedState::has_no_access_keys`) given the trie nodes, so
    this needs a proof source, not new verification code. The same custom endpoint as gap 1
@@ -75,6 +75,15 @@ The observation's `head` is `H`'s height and timestamp. The proven state is the 
 4. **Payload availability.** A NEAR-only log proves inline payloads with the key `"d" ++ id`
    (`VerifiedState::contract_data`). Call-data payloads (draft PR #3) need a check that the
    bytes were in the `submit` receipt at the published height; that is not done here.
+
+## Testing
+
+`tests/mainnet_fixtures.rs` replays real mainnet RPC responses (captured with the
+`fetch-fixtures` example): eight light-client blocks across an epoch boundary verified with real
+producer signatures, block hashes and shard-root merklization matching nearcore, and a
+`view_state` proof for `linkdrop.near` checked for a present and an absent key. `tests/entry.rs`
+runs the real contract in near-sdk's mock runtime and proves entries from the exact bytes it
+stores.
 
 ## Threat model changes
 

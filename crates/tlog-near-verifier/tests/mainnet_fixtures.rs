@@ -32,7 +32,7 @@ fn light_client_follows_mainnet() {
     assert!(blocks.len() >= 2, "fixtures missing; run the fetch-fixtures example");
     let bps = views::validators(&load::<Vec<ValidatorStakeView>>("bps_0.json")).unwrap();
     let mut lc = LightClient::from_checkpoint(blocks[0].hash(), &blocks[0], Some(bps)).unwrap();
-    let mut epochs = std::collections::BTreeSet::new();
+    let mut epochs = std::collections::BTreeSet::from([blocks[0].inner_lite.epoch_id]);
     for b in &blocks[1..] {
         lc.update(b).unwrap_or_else(|e| panic!("height {}: {e}", b.inner_lite.height));
         epochs.insert(b.inner_lite.epoch_id);
