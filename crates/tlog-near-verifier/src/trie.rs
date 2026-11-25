@@ -242,114 +242,20 @@ impl TrieProof {
 }
 
 #[cfg(test)]
-pub(crate) mod test_trie {
-    //! A minimal trie builder in nearcore's encoding, for tests.
-
-    use super::*;
-
-    pub fn encode_nibbles(nibs: &[u8], is_leaf: bool) -> Vec<u8> {
-        let mut out = Vec::new();
-        let flag = if is_leaf { 0x20 } else { 0 };
-        let rest = if nibs.len() % 2 == 1 {
-            out.push(flag | 0x10 | nibs[0]);
-            &nibs[1..]
-        } else {
-            out.push(flag);
-            nibs
-        };
-        for pair in rest.chunks(2) {
-            out.push((pair[0] << 4) | pair[1]);
-        }
-        out
-    }
-
-    fn value_ref(out: &mut Vec<u8>, v: &[u8]) {
-        out.extend_from_slice(&(v.len() as u32).to_le_bytes());
-        out.extend_from_slice(&CryptoHash::hash(v).0);
-    }
-
-    /// Builds a trie over `entries`; returns `(root, all nodes and values)`.
-    pub fn build(entries: &[(Vec<u8>, Vec<u8>)]) -> (CryptoHash, Vec<Vec<u8>>) {
-        let mut items = Vec::new();
-        let mut list: Vec<(Vec<u8>, Vec<u8>)> =
-            entries.iter().map(|(k, v)| (to_nibbles(k), v.clone())).collect();
-        list.sort();
-        if list.is_empty() {
-            return (CryptoHash::default(), items);
-        }
-        let root = node(&list, &mut items);
-        (root, items)
-    }
-
-    fn push(items: &mut Vec<Vec<u8>>, mut body: Vec<u8>) -> CryptoHash {
-        body.extend_from_slice(&0u64.to_le_bytes());
-        let h = CryptoHash::hash(&body);
-        items.push(body);
-        h
-    }
-
-    fn node(list: &[(Vec<u8>, Vec<u8>)], items: &mut Vec<Vec<u8>>) -> CryptoHash {
-        if list.len() == 1 {
-            let (k, v) = &list[0];
-            items.push(v.clone());
-            let mut body = vec![0u8];
-            let enc = encode_nibbles(k, true);
-            body.extend_from_slice(&(enc.len() as u32).to_le_bytes());
-            body.extend_from_slice(&enc);
-            value_ref(&mut body, v);
-            return push(items, body);
-        }
-        let first = &list[0].0;
-        let common =
-            (0..first.len()).take_while(|&i| list.iter().all(|(k, _)| k.get(i) == Some(&first[i]))).count();
-        if common > 0 {
-            let rest: Vec<_> = list.iter().map(|(k, v)| (k[common..].to_vec(), v.clone())).collect();
-            let child = node(&rest, items);
-            let mut body = vec![3u8];
-            let enc = encode_nibbles(&first[..common], false);
-            body.extend_from_slice(&(enc.len() as u32).to_le_bytes());
-            body.extend_from_slice(&enc);
-            body.extend_from_slice(&child.0);
-            return push(items, body);
-        }
-        let value = list.iter().find(|(k, _)| k.is_empty()).map(|(_, v)| v.clone());
-        let mut children = Vec::new();
-        let mut bitmap = 0u16;
-        for nib in 0..16u8 {
-            let sub: Vec<_> = list
-                .iter()
-                .filter(|(k, _)| k.first() == Some(&nib))
-                .map(|(k, v)| (k[1..].to_vec(), v.clone()))
-                .collect();
-            if !sub.is_empty() {
-                bitmap |= 1 << nib;
-                children.push(node(&sub, items));
-            }
-        }
-        let mut body = Vec::new();
-        match &value {
-            Some(v) => {
-                items.push(v.clone());
-                body.push(2);
-                value_ref(&mut body, v);
-            }
-            None => body.push(1),
-        }
-        body.extend_from_slice(&bitmap.to_le_bytes());
-        for c in children {
-            body.extend_from_slice(&c.0);
-        }
-        push(items, body)
-    }
-}
+#[path = "../tests/common/trie_builder.rs"]
+mod test_trie;
 
 #[cfg(test)]
 mod tests {
-    use super::test_trie::build;
     use super::*;
 
     fn kv(k: &[u8], v: &[u8]) -> (Vec<u8>, Vec<u8>) {
         (k.to_vec(), v.to_vec())
+    }
+
+    fn build(entries: &[(Vec<u8>, Vec<u8>)]) -> (CryptoHash, Vec<Vec<u8>>) {
+        let (root, items) = super::test_trie::build(entries);
+        (CryptoHash(root), items)
     }
 
     #[test]

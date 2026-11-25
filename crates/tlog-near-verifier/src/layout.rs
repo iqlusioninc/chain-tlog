@@ -119,7 +119,7 @@ pub fn decode_prefix<T: BorshDeserialize>(bytes: &[u8]) -> Option<T> {
 /// Later versions start with a `u128::MAX` sentinel and are refused, so a
 /// verifier fails closed rather than misreading them.
 pub fn decode_account(bytes: &[u8]) -> Option<AccountInfo> {
-    if bytes.len() != 88 || bytes[..16] == [0xff; 16] {
+    if bytes.len() != 72 || bytes[..16] == [0xff; 16] {
         return None;
     }
     Some(AccountInfo { code_hash: CryptoHash(bytes[32..64].try_into().ok()?) })
