@@ -1,0 +1,12 @@
+{
+  "account_id": "linkdrop.near",
+  "result": {
+    "amount": "38993429591919424600000000",
+    "block_hash": "G6meBgQyGFDdGeDLZrs8KiGSPARdCB8ebDyDPEZ7sTno",
+    "block_height": 226084021,
+    "code_hash": "55E7imniT2uuYrECn17qJAk9fLcwQW4ftNSwmCJL5Di",
+    "locked": "0",
+    "storage_paid_at": 0,
+    "storage_usage": 357658
+  }
+}
