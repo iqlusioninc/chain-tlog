@@ -108,7 +108,8 @@ have before.
 - `rules::check` has no size limit of its own, so `Reject::PayloadTooLarge` is gone. A size
   rule in `check` would make the two backends' rules differ. Each chain's own limit applies
   instead.
-- Payloads larger than one transaction need chunked uploads. Chunked uploads need a content
+- Decided 2026-11-25: NEAR payloads are capped at one transaction for now. Payloads larger
+  than one transaction need chunked uploads. Chunked uploads need a content
   commitment that the contract can check one chunk at a time (for example a hash over
   fixed-size chunk hashes), which would change `content_hash` on both backends. Not done here.
 
