@@ -193,16 +193,6 @@ Timestamps feed `max_head_age` and `mirror_grace`.
 the protocol's allowed drift. A majority could do more, but that is T12.
 *Mitigation:* pick `max_head_age` and `mirror_grace` well above allowed drift.
 
-### T17 NEAR missing-chunk lag
-When a NEAR block has no new chunk for the contract's shard, its state root is from before the
-shard's previous chunk, so a proof at a fresh block can miss that chunk's effects (spec 6.1).
-*Impact:* a revocation executed in the shard's latest chunk can read as `Active` until the
-shard's next chunk. Chunk producers who keep withholding the shard's chunks stretch this out.
-A `Revoked` answer is never wrong.
-*Mitigation:* take the observation's `head` from the last block with a new chunk for the shard,
-which needs full-header verification (open, spec 10). Under `Both`, the Celestia observation
-still shows the revocation.
-
 ### T15 Signature malleability and verifier differences
 Different Ed25519 rules on the two backends could make a record valid on one only.
 *Stopped by* using the same non-strict verification on both (spec 4.1). Malleability does not
@@ -218,6 +208,16 @@ caught by the `code_hash` and access-key checks only if the descriptor's `code_h
 A start height that is too late makes the follower miss the registry, so every entry reads
 `NotFound` (fails closed). A start height that is too early only costs time.
 *Mitigation:* A7. The descriptor is distributed with the relying software, like a CT log list.
+
+### T17 NEAR missing-chunk lag
+When a NEAR block has no new chunk for the contract's shard, its state root is from before the
+shard's previous chunk, so a proof at a fresh block can miss that chunk's effects (spec 6.1).
+*Impact:* a revocation executed in the shard's latest chunk can read as `Active` until the
+shard's next chunk. Chunk producers who keep withholding the shard's chunks stretch this out.
+A `Revoked` answer is never wrong.
+*Mitigation:* take the observation's `head` from the last block with a new chunk for the shard,
+which needs full-header verification (open, spec 10). Under `Both`, the Celestia observation
+still shows the revocation.
 
 ## 5. Out of scope for v1
 
