@@ -51,7 +51,7 @@ LogDescriptor {
 NearHost {
     account_id:          AccountId,  // contract account
     code_hash:           [u8; 32],   // hash of the audited, reproducible wasm build
-    max_inline_payload:  u64,        // must match the contract's init argument
+    max_inline_payload:  u64,        // storage cap; must match the contract's init argument
 }
 
 CelestiaHost {
@@ -88,7 +88,9 @@ H(tag, data) = SHA-256(tag || 0x00 || data)
 ```text
 LogConfig       { name: String, admin: PublicKey }
 Publish         { log_id, publisher: PublicKey, subject: String,
-                  content_hash: [u8; 32], content_len: u64, serial: u64 }
+                  content_hash: [u8; 32], content_len: u64, serial: u64,
+                  payload_mode: PayloadMode }
+PayloadMode     = Attached(0) | Detached(1)
 Revoke          { log_id, entry_id, revoker: PublicKey, reason: RevocationReason }
 RegistryUpdate  { log_id, seq: u64, op: RegistryOp }
 RegistryOp      = AddPublisher { key, label: String } | RemovePublisher { key }
@@ -98,8 +100,12 @@ SignedStatement { statement: Statement, signature: [u8; 64] }
 Record          { signed: SignedStatement, payload: Option<Vec<u8>> }
 ```
 
-`PublicKey` is a 32-byte Ed25519 key. `RevocationReason` is encoded as a single byte; any other
-value fails to decode.
+`PublicKey` is a 32-byte Ed25519 key. `RevocationReason` and `PayloadMode` are encoded as a
+single byte; any other value fails to decode.
+
+`payload_mode` says, under the publisher's signature, whether the record carries the payload
+(`Attached`) or only its hash (`Detached`). It closes payload stripping (threat model T5). It
+comes from design note 0002 (PR #3).
 
 ### 3.2 Record wire format
 
@@ -117,11 +123,11 @@ the same signed statement everywhere. `entry_id` covers only the `Publish` state
 signature or the payload, so an entry has the same id on both backends and a verifier can line
 them up without a mapping.
 
-The `payload` field of the `Record` MAY differ between backends, because each backend has its
-own inline payload limit. In particular, a record whose payload exceeds NEAR's
-`max_inline_payload` is rejected by NEAR and must be submitted there without its payload (or
-by the mechanism chosen in section 9). The earlier design note says the record is
-byte-identical everywhere; that holds only when the payload fits both backends.
+Because `payload_mode` is signed, the whole encoded record is byte-identical on every backend
+too: an `Attached` record carries the payload everywhere and a `Detached` record carries it
+nowhere. In a log hosted on both backends, an `Attached` payload MUST fit the smaller of the
+two size limits (one NEAR transaction, about 1.5 MiB, and Celestia's maximum blob size).
+Otherwise it is accepted on one backend only and is a `SplitPublication` under `Both`.
 
 ## 4. Validation rules
 
@@ -135,10 +141,11 @@ Checks, in order:
 2. **Signature**: the signature MUST verify over the signing input (section 3) under the
    statement's signer: `publisher` for `Publish`, `revoker` for `Revoke`, `config.admin` for
    `Registry`. Else `BadSignature`.
-3. **Payload**: if `payload` is present, the statement MUST be a `Publish`, and
-   `len(payload) == content_len` and `SHA-256(payload) == content_hash`. Else
-   `PayloadMismatch`. If the backend has an inline limit, `len(payload)` MUST NOT exceed it.
-   Else `PayloadTooLarge`.
+3. **Payload**: a `Publish` with `payload_mode = Attached` MUST carry a payload with
+   `len(payload) == content_len` and `SHA-256(payload) == content_hash`. A `Publish` with
+   `Detached`, and every other statement, MUST NOT carry one. Else `PayloadMismatch`.
+   (`check` still accepts an optional size limit and `PayloadTooLarge`, but neither backend
+   sets one any more; size is bounded by the chain's own transaction or blob limit.)
 4. Per statement:
    - **Publish**: `publisher` MUST be registered (`UnknownPublisher`). `entry_id` MUST NOT
      already exist, revoked or not (`DuplicateEntry`). Effect: insert an active entry.
@@ -156,7 +163,7 @@ Consequences that the rest of the spec relies on:
 - An entry id can never be reused, even after revocation. Publishers vary `serial` to publish
   the same content again.
 - Every rejection is either permanent for that record (`WrongLog`, `BadSignature`,
-  `PayloadMismatch`, `PayloadTooLarge`, `DuplicateEntry`, `AlreadyRevoked`,
+  `PayloadMismatch`, `DuplicateEntry`, `AlreadyRevoked`,
   `AdminCannotPublish`, `AlreadyPublisher`, `NotPublisher`, and `BadRegistrySeq` with a lower
   `seq`) or may succeed on a later retry (`UnknownPublisher`, `UnknownEntry`, `NotAuthorized`,
   and `BadRegistrySeq` with a higher `seq`). Relayers retry the second kind (section 6.3).
@@ -176,13 +183,20 @@ enforcing this in `check` instead.
 
 ### 5.1 NEAR
 
-The contract exposes `submit(record: base64)`. Anyone may call it; authority comes only from
-the signature inside the record. The contract stores:
+The contract exposes `submit(record: base64)` and `submit_raw()`, whose function-call
+arguments are the raw `encoded_record` (byte-identical to the Celestia blob). Large payloads
+must use `submit_raw`, because base64 in JSON cuts the usable size to about 1.1 MiB. Anyone may
+call either; authority comes only from the signature inside the record. The contract stores:
 
 | Contract storage key | Value |
 |---|---|
-| `"e" || entry_id` | borsh `StoredEntry { publish, seq, published: ChainTime, revoked: Option<Revocation> }` |
-| `"d" || entry_id` | borsh `Vec<u8>`, inline payload, if one was attached |
+| `"e" || entry_id` | borsh `StoredEntry { publish, seq, published: ChainTime, revoked: Option<Revocation>, payload: PayloadRef }` |
+| `"d" || entry_id` | borsh `Vec<u8>`, the payload, only when `payload = Inline` |
+
+`PayloadRef` is `Detached(0)` (hash-only publication), `Inline(1)` (an attached payload no
+larger than the deploy-time `max_inline_payload`, kept in state) or `CallData(2)` (an
+attached payload larger than that, checked against the hash and left in the call data of the
+receipt that executed at `published.height`).
 | `"p" || publisher_key` | borsh `String`, publisher label |
 | `"STATE"` | borsh contract state (config, counters) |
 
@@ -237,7 +251,16 @@ is empty. Because a locked account cannot add keys, this only has to hold at one
 height after deployment. Verifiers SHOULD check it once and record the height. How to produce
 that proof from NEAR RPC is an open item for the NEAR light-client work.
 
-Inline payloads are proven the same way, with the key `"d" || entry_id`.
+Payload retrieval depends on `StoredEntry.payload`: `Inline` bytes are proven with a state
+proof of `"d" || entry_id`; `CallData` bytes are fetched from the receipt at
+`published.height` (from any source: an archival RPC, an indexer, the publisher) and checked
+against `content_hash`, which is already in proven state, so no transaction or outcome proof is
+needed; `Detached` payloads were never on NEAR.
+
+**RPC limit.** nearcore serves proofs only from unpaginated `view_state`, which refuses
+accounts whose state exceeds `trie_viewer_state_size_limit` (50,000 bytes by default). A busy
+log passes that quickly, so a NEAR verifier needs an RPC node with a raised limit or its own
+node. This is a deployment requirement, not a trust assumption: the proofs are still checked.
 
 Execution-outcome proofs (`light_client_proof` for the `submit` receipt) prove that a record
 was accepted at some point, but not that the entry is unrevoked now. They are not sufficient
@@ -376,23 +399,34 @@ choice, and SHOULD alert on:
 - on NEAR, any change to the account's `code_hash` or access keys;
 - a backend whose verified head stops advancing.
 
-## 9. Large payloads (open)
+## 9. Payloads and data availability
 
-Payloads are bound to an entry by `content_hash` and `content_len`. How a payload is made
-available is still being decided in a separate piece of work, and this section will be filled
-in from it. Facts the decision must respect:
+Decided in design note 0002 (PR #3). Payloads are bound to an entry by `content_hash` and
+`content_len`, so integrity never depends on where the bytes come from.
 
-- On Celestia the payload rides inline in the publish blob, so availability comes with the
-  log, up to Celestia's maximum blob size.
-- On NEAR, the contract stores inline payloads up to `max_inline_payload` and pays storage
-  staking for them. The starting idea under research is to carry large payloads as call data
-  in the NEAR transaction instead of contract storage, which changes what a NEAR light client
-  can prove about availability (state proofs cover storage, not transaction arguments) and
-  how long the data is retained.
-- Whatever is chosen, verifiers MUST be able to check availability through light clients, and
-  this spec MUST say which backends' availability is enough under `Both` (for example: any
-  authoritative backend that serves bytes matching `content_hash`).
-- The payload-stripping issue in threat model T5 has to be closed by the same change.
+| Backend | `Attached` payload lives in | Retrievable from the chain for |
+|---|---|---|
+| Celestia | the publish blob | the Celestia pruning window; sampled inside the sampling window; archival sources after that |
+| NEAR, `len <= max_inline_payload` | contract state (`Inline`) | as long as the contract exists, on every node |
+| NEAR, larger | the `submit` receipt's call data (`CallData`) | about 36 hours on regular nodes (`gc_num_epochs_to_keep` = 5); archival nodes after that |
+
+A `Detached` payload is never on either chain; only its hash is logged.
+
+**Availability check.** For an `Attached` entry, a verifier counts the payload as available
+when it can get bytes matching `content_hash` from an authoritative backend: under `Both`,
+from either one. Requiring both copies would add no security, since both chains agree on the
+hash, and would tie availability to the shorter retention.
+
+What this promises: an entry with `PayloadRef::CallData` or a Celestia blob proves the payload
+was available at publication, because validators had to hold the chunk or the block. After
+the retention windows above, retrievability depends on someone keeping the data (an archival
+node, the operator, or monitors and verifiers that fetch each payload while it is fresh, which
+the online-verifier assumption makes possible). A log whose payloads must stay downloadable
+from a chain long-term should include Celestia with an archival source, or keep payloads
+under `max_inline_payload`.
+
+Payloads larger than one NEAR transaction need chunked uploads and a chunk-friendly content
+commitment, which would change `content_hash` on both backends. That decision is open.
 
 ## 10. Open items in the code
 
@@ -405,7 +439,5 @@ These are differences between this spec and the code in PR #1, or gaps the spec 
 3. **Signature test vectors** across the NEAR host function and `Ed25519Dalek` (section 4.1).
 4. **Weak keys.** Reject small-order and non-canonical keys in `check` for `AddPublisher` (and
    in `LogConfig` creation), rather than relying on the admin.
-5. **Payload stripping** (threat model T5). `Publish` does not commit to whether the payload is
-   inline, so anyone can relay a stripped copy first.
-6. **Admin key rotation.** The admin key is part of `log_id`, so it cannot be rotated without
+5. **Admin key rotation.** The admin key is part of `log_id`, so it cannot be rotated without
    starting a new log. Acceptable for v1; a compromise means migrating to a new log.

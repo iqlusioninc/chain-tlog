@@ -1,4 +1,4 @@
-# 0002: Normative spec and threat model
+# 0003: Normative spec and threat model
 
 Status: proposed. Changes the threat model and the proof format.
 
@@ -16,8 +16,11 @@ code already do, this note makes these changes:
   that the account has no access keys (spec 6.1). The 0001 rule "deploy with no full-access
   keys" becomes "no access keys at all", because a proof that the
   access-key subtree is empty is simpler to check than reading every key's permission.
-- **Records are identical per signed statement, not per byte.** The inline payload may differ
-  between backends because their limits differ (spec 3.3). 0001 said byte-identical.
+- **Payload size in a two-backend log.** With `payload_mode` from 0002, records are
+  byte-identical again, so an `Attached` payload must fit both chains' limits or it becomes a
+  split publication (spec 3.3).
+- **NEAR RPC requirement.** Proof-serving `view_state` has a 50 KB account-state limit by
+  default, so NEAR verifiers need an RPC node with a raised limit (spec 6.1).
 - **Relayer obligations.** Records go to every backend, and retryable rejections are retried
   (spec 6.3). Two ordering races near publisher removal can still leave backends permanently
   different for one entry; both are safe under `Both` (spec 7.2).
@@ -26,10 +29,8 @@ code already do, this note makes these changes:
 
 ## Found while writing
 
-- **Payload stripping (T5).** Anyone can relay a copy of a `Publish` without its payload and
-  get it included first, which removes the payload from that backend for good. Fixing it
-  means the signed `Publish` commits to the payload's location. It should land with the
-  large-payload decision, which is still open (spec 9).
+- **Payload stripping (T5).** Anyone could relay a copy of a `Publish` without its payload and
+  get it included first. Fixed by `Publish.payload_mode` in 0002.
 - **Weak keys.** `check` should reject small-order and non-canonical publisher keys instead of
   leaving it to the admin.
 - **Signature equivalence** between NEAR's `ed25519_verify` and ed25519-dalek is assumed, not
@@ -37,5 +38,5 @@ code already do, this note makes these changes:
 
 ## Not decided here
 
-Large payloads (spec 9), admin key rotation, and anything that needs gossip or consistency
+Chunked uploads for payloads larger than one NEAR transaction, admin key rotation, and anything that needs gossip or consistency
 proofs.

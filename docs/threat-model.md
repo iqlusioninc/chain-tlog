@@ -14,9 +14,9 @@ For a verifier using a given authority choice, with honest light-client roots of
 - **P3 Non-equivocation.** Every verifier using the same backend sees the same history for it,
   because that history is the chain's consensus. There is no log operator who could show
   different views to different verifiers.
-- **P4 Availability of payloads.** Open until spec section 9 is settled. Today: on Celestia an
-  inline payload is as available as the block; on NEAR an inline payload is as available as
-  contract state.
+- **P4 Availability of payloads.** An `Attached` payload was available to the chain at
+  publication, and stays retrievable from it for that backend's retention window (spec 9).
+  Integrity of a payload from any source is checked against `content_hash`.
 - **P5 Auditability.** Monitors can enumerate every entry, revocation and registry change on
   every backend.
 
@@ -33,8 +33,9 @@ one of them must say so.
 - **A2 Online verifiers.** Verifiers keep their light clients synced. An offline verifier
   returns `Unverifiable` until it catches up; a Celestia verifier that was offline replays the
   heights it missed.
-- **A3 Large payloads.** Payloads can be too large for NEAR contract storage. How they are
-  handled is open (spec 9).
+- **A3 Large payloads.** Payloads can be too large for NEAR contract storage. They travel as
+  NEAR call data and are retained only for NEAR's garbage-collection window (spec 9).
+  Long-term retrieval needs an archival source or verifiers that keep payloads.
 - **A4 Chain consensus.** For each authoritative chain, more than 2/3 of stake (NEAR) or voting
   power (Celestia) is honest in every period the verifier relies on.
 - **A5 Light-client bootstrap.** The verifier starts from a correct trusted checkpoint (weak
@@ -102,17 +103,17 @@ split publications.
 choosing Single. Monitors alert on split publications (spec 8). Relaying is permissionless, so
 anyone who sees the record can copy it to the other backend.
 
-### T5 Payload stripping (open)
+### T5 Payload stripping
 An outsider who sees a signed `Publish` record with an inline payload (in a NEAR or Celestia
 mempool, or on the other backend) submits the same signed statement with `payload = None`, and
 gets it included first. The stripped copy is valid, so the original is then rejected as
 `DuplicateEntry`. The entry is active but its payload is not on that backend.
 *Impact:* breaks P4 on the affected backend. Integrity is unaffected: the payload, wherever it
 comes from, still has to match `content_hash`.
-*Fix (needs a design note, changes the proof format):* the signed `Publish` commits to where its
-payload lives (for example `payload: Inline | External { ... }`), and `check` rejects a record
-whose attachment does not match. This should land together with the large-payload decision
-(spec 9).
+*Stopped by* the signed `Publish.payload_mode` (design note 0002, PR #3). A stripped copy of an
+`Attached` publication fails `check` with `PayloadMismatch` on both backends, so it cannot land
+first.
+*Residual:* none for stripping. Retention after publication is covered by spec 9.
 
 ### T6 Data withholding on Celestia
 A block producer publishes a header but withholds the namespace data, hoping verifiers read the
