@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn unregistered_publisher_rejected() {
         let mut f = Fixture::new();
-        let p = publish(f.id(), &f.publ, "s", b"x", 1);
+        let p = publish_detached(f.id(), &f.publ, "s", b"x", 1);
         assert_eq!(
             rejected(f.apply(&record(&f.publ.clone(), Statement::Publish(p), None))),
             Reject::UnknownPublisher
@@ -281,10 +281,19 @@ mod tests {
     fn duplicate_and_payload_checks() {
         let mut f = Fixture::new();
         f.add_publisher();
-        let p = publish(f.id(), &f.publ, "s", b"x", 1);
+        let p = publish_detached(f.id(), &f.publ, "s", b"x", 1);
         let publ = f.publ.clone();
         f.apply(&record(&publ, Statement::Publish(p.clone()), None)).unwrap();
         assert_eq!(rejected(f.apply(&record(&publ, Statement::Publish(p), None))), Reject::DuplicateEntry);
+
+        // Threat T5: a stripped copy of an attached publication is rejected,
+        // so it cannot be logged ahead of the real record.
+        let att = publish(f.id(), &publ, "s", b"x", 9);
+        assert_eq!(
+            rejected(f.apply(&record(&publ, Statement::Publish(att.clone()), None))),
+            Reject::PayloadMismatch
+        );
+        f.apply(&record(&publ, Statement::Publish(att), Some(b"x".to_vec()))).unwrap();
 
         let p2 = publish(f.id(), &publ, "s", b"x", 2);
         assert_eq!(
@@ -318,7 +327,7 @@ mod tests {
         let mut f = Fixture::new();
         f.add_publisher();
         let publ = f.publ.clone();
-        let p = publish(f.id(), &publ, "s", b"x", 1);
+        let p = publish_detached(f.id(), &publ, "s", b"x", 1);
         let id = p.entry_id();
         f.apply(&record(&publ, Statement::Publish(p), None)).unwrap();
         f.registry(1, RegistryOp::RemovePublisher { key: pk(&publ) }).unwrap();

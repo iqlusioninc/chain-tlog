@@ -86,6 +86,8 @@ revocation that appears on only one chain.
 
 ## Flagged: payload size on NEAR
 
+Resolved by [0002](0002-near-payloads-as-call-data.md): payloads travel as call data on NEAR.
+
 The project assumes payloads are too large to store on NEAR. That assumption came from the
 old split design, and it conflicts with a NEAR-only log:
 
