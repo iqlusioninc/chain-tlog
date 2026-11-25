@@ -1,0 +1,23 @@
+[package]
+name = "tlog-core"
+description = "Shared statement types, validation rules and verdict policy for chain-tlog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["dalek"]
+# Signature verification with ed25519-dalek, for clients. The NEAR contract
+# turns this off and uses the host's ed25519_verify instead.
+dalek = ["dep:ed25519-dalek"]
+
+[dependencies]
+borsh.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ed25519-dalek = { workspace = true, optional = true }
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true, features = ["rand_core", "std"] }
+rand = "0.8"

@@ -1,0 +1,26 @@
+[package]
+name = "tlog-celestia"
+description = "chain-tlog Celestia backend: publisher and light-node verifier for a log namespace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Publish records through a celestia-node RPC endpoint.
+rpc = ["dep:celestia-rpc"]
+# Verify through an embedded Lumina light node.
+lumina = ["dep:lumina-node", "dep:blockstore"]
+
+[dependencies]
+tlog-core = { workspace = true, features = ["dalek"] }
+celestia-types.workspace = true
+celestia-rpc = { workspace = true, optional = true }
+lumina-node = { workspace = true, optional = true }
+blockstore = { version = "0.8", optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true, features = ["std"] }
+tokio = { version = "1", features = ["macros", "rt"] }
