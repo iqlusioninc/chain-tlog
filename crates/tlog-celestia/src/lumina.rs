@@ -46,7 +46,10 @@
 //! in-memory stores the default pruning window is **zero**: headers are
 //! pruned as soon as they are sampled, usually before the follower reads
 //! them. A follower that falls behind the pruning window cannot continue
-//! (it gets [`LuminaSourceError::Pruned`]). Set
+//! (it gets [`LuminaSourceError::Pruned`]). The source learns what was
+//! pruned from the node's `PrunedHeaders` events through [`SamplingTracker`];
+//! with [`Availability::Unchecked`] there is no tracker, and a pruned height
+//! inside the sampling window is reported as `NotSynced` (a stall). Set
 //! [`NodeBuilder::pruning_window`](lumina_node::NodeBuilder::pruning_window)
 //! to at least the longest time the follower may be offline, or use a
 //! persistent store with the default 7-day window.
@@ -135,9 +138,11 @@ impl SourceError for LuminaSourceError {
 struct Sampled {
     ok: BlockRanges,
     failed: HashSet<u64>,
+    pruned: BlockRanges,
 }
 
-/// Heights the node has sampled, built from node events.
+/// Heights the node has sampled, and heights it has pruned, built from node
+/// events.
 #[derive(Clone, Debug, Default)]
 pub struct SamplingTracker {
     inner: Arc<Mutex<Sampled>>,
@@ -152,6 +157,15 @@ impl SamplingTracker {
     /// Whether the node's last sampling attempt for `height` failed.
     pub fn sampling_failed(&self, height: u64) -> bool {
         self.inner.lock().expect("lock").failed.contains(&height)
+    }
+
+    /// Whether the node has pruned the header at `height`.
+    pub fn is_pruned(&self, height: u64) -> bool {
+        self.inner.lock().expect("lock").pruned.contains(height)
+    }
+
+    fn record_pruned(&self, from: u64, to: u64) {
+        let _ = self.inner.lock().expect("lock").pruned.insert_relaxed(from..=to);
     }
 
     fn record(&self, height: u64, failed: bool) {
@@ -170,8 +184,12 @@ impl SamplingTracker {
     /// with the subscriber from `NodeBuilder::start_subscribed`.
     pub async fn run(self, mut events: EventSubscriber) {
         while let Ok(info) = events.recv().await {
-            if let NodeEvent::SamplingResult { height, failed, .. } = info.event {
-                self.record(height, failed);
+            match info.event {
+                NodeEvent::SamplingResult { height, failed, .. } => self.record(height, failed),
+                NodeEvent::PrunedHeaders { from_height, to_height } => {
+                    self.record_pruned(from_height, to_height)
+                }
+                _ => {}
             }
         }
     }
@@ -231,12 +249,20 @@ impl<'a, B: Blockstore + 'static, S: Store + 'static> LuminaSource<'a, B, S> {
         }
     }
 
-    /// A header is missing from the store. Above the lowest stored header,
+    /// A header is missing from the store. If the tracker saw the node prune
+    /// it, it is gone. The store keeps genesis and does not say what it
+    /// pruned, so without that signal a pruned header looks like one the
+    /// syncer has not reached yet. Otherwise: above the lowest stored header,
     /// the syncer will get to it. Below it, it is gone if the lowest stored
     /// header is already at the edge of the sampling window, since the
     /// syncer never goes past that edge; otherwise the syncer is still
     /// backfilling.
     async fn classify_missing(&self, height: u64) -> LuminaSourceError {
+        if let Availability::Sampled { tracker, .. } = &self.availability {
+            if tracker.is_pruned(height) {
+                return LuminaSourceError::Pruned(height);
+            }
+        }
         let Ok(info) = self.node.syncer_info().await else {
             return LuminaSourceError::NotSynced(height);
         };
@@ -370,6 +396,16 @@ mod tests {
         assert!(t.is_sampled(5) && !t.sampling_failed(5));
         t.record(5, true);
         assert!(t.is_sampled(5), "a later failed retry does not undo a success");
+    }
+
+    #[test]
+    fn tracker_records_pruned_ranges() {
+        let t = SamplingTracker::default();
+        assert!(!t.is_pruned(5));
+        t.record_pruned(2, 6);
+        t.record_pruned(10, 10);
+        assert!(t.is_pruned(2) && t.is_pruned(6) && t.is_pruned(10));
+        assert!(!t.is_pruned(1) && !t.is_pruned(7) && !t.is_pruned(11));
     }
 
     #[test]

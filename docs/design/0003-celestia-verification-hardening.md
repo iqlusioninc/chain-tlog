@@ -58,6 +58,11 @@ a verifier stall, or use a guarantee it did not have.
    window is zero, so headers are pruned as soon as they are sampled, usually before the
    follower reads them. A follower that falls behind the pruning window gets `Pruned`, which is
    fatal. Set `pruning_window` to at least the longest time a verifier may be offline.
+   The store does not say what it pruned, and it keeps genesis, so a pruned header looked like
+   one the syncer had not reached yet: the devnet run showed `NotSynced` (transient) forever,
+   a silent stall. `SamplingTracker` now also records the node's `PrunedHeaders` events and
+   `LuminaSource` reports those heights as `Pruned`. With `Availability::Unchecked` there is no
+   tracker and the stall remains.
 4. **Lumina only syncs headers inside its 7-day sampling window.** A cold start on an older log
    cannot get verified headers from Lumina at all. This is unchanged from 0001 and still needs
    an archival header source verified by hash chain back from a Lumina-verified header. That is
@@ -84,5 +89,14 @@ covers publish then revoke, absence proofs, a hidden revocation served three dif
 dropped row and a dropped share on a multi-row namespace, stall and resume, a fatal error with
 partial reports, unparseable and share-version-1 blobs, and Fibre blobs.
 
-A live run against a celestia-app + celestia-node devnet (Lumina's `ci/docker-compose.yml`) is
-not in this change. The cloud container could not pull the images. See the PR for status.
+`crates/tlog-celestia/tests/devnet.rs` (ignored by default, features `rpc` and `lumina`) runs
+against Lumina's CI devnet at `lumina-node-v1.3.0` (celestia-app v10.2.0-mocha, celestia-node
+v0.34.2-mocha, `validator` plus the `node-0` bridge, Fibre off). It posts through
+`CelestiaPublisher` and follows through an embedded Lumina node:
+
+- publish, three or more empty heights, revoke: every height is read and proven, the entry ends
+  `Revoked` at the revoke height, no rejections. The tracker had a sampling success for every
+  height when it was read; own sampling never ran and there were no stalls.
+- own sampling against the bridge (`request_sample`) with a tracker that never hears from the
+  node: every height verifies.
+- in-memory default pruning window: a pruned height is a fatal `Pruned`, not a stall (finding 3).
