@@ -144,8 +144,8 @@ Checks, in order:
 3. **Payload**: a `Publish` with `payload_mode = Attached` MUST carry a payload with
    `len(payload) == content_len` and `SHA-256(payload) == content_hash`. A `Publish` with
    `Detached`, and every other statement, MUST NOT carry one. Else `PayloadMismatch`.
-   (`check` still accepts an optional size limit and `PayloadTooLarge`, but neither backend
-   sets one any more; size is bounded by the chain's own transaction or blob limit.)
+   `check` has no size rule, because one would make the backends' rules differ; size is
+   bounded by each chain's own transaction or blob limit.
 4. Per statement:
    - **Publish**: `publisher` MUST be registered (`UnknownPublisher`). `entry_id` MUST NOT
      already exist, revoked or not (`DuplicateEntry`). Effect: insert an active entry.
