@@ -14,6 +14,7 @@ first.
 |---|---|
 | `crates/tlog-core` | Record format, ids, validation rules shared by both backends, in-memory log fold, verdict policy for one or both backends |
 | `contracts/tlog-near` | NEAR contract: `submit(record)`, entry and payload views, NEP-297 events |
+| `crates/tlog-near-verifier` | NEAR light client (block producers across epochs, header approvals), state-trie proofs for the contract's keys, entry observations for the verdict policy; `rpc` feature: untrusted RPC client and `NearBackend` |
 | `crates/tlog-celestia` | Namespace follower and sync loop; `lumina` feature: verified source on a Lumina light node; `rpc` feature: publisher over celestia-node RPC |
 
 ## Build and test
