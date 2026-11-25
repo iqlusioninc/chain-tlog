@@ -12,6 +12,8 @@
 //! Blobs below `start_height` are ignored.
 //!
 //! - [`follower`]: the namespace fold and per-entry observations.
+//! - [`proof`]: checking namespace completeness and absence proofs against
+//!   a verified header, and parsing the shares into blobs.
 //! - [`source`]: what a verifier needs from a Celestia light client, and a
 //!   sync loop over it.
 //! - `lumina` (feature `lumina`): that source backed by an embedded Lumina node.
@@ -20,7 +22,13 @@
 #![forbid(unsafe_code)]
 
 pub mod follower;
+pub mod proof;
 pub mod source;
+
+#[cfg(test)]
+mod testkit;
+#[cfg(test)]
+mod verify_tests;
 
 #[cfg(feature = "lumina")]
 pub mod lumina;
@@ -34,7 +42,8 @@ use tlog_core::statement::Record;
 use tlog_core::LogId;
 
 pub use follower::{FollowError, HeightReport, NamespaceFollower, Rejection};
-pub use source::{sync_to_tip, SyncError, VerifiedNamespaceSource};
+pub use proof::{items_from_namespace_data, verify_namespace_data, NamespaceItem, ProofError};
+pub use source::{sync_to_tip, SourceError, Stalled, SyncError, SyncOutcome, VerifiedNamespaceSource};
 
 /// Length of a version-0 namespace id.
 pub const NAMESPACE_V0_LEN: usize = 10;
