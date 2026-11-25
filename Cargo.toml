@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tlog-core", "crates/tlog-celestia", "contracts/tlog-near"]
+members = ["crates/tlog-core", "crates/tlog-celestia", "crates/tlog-e2e", "contracts/tlog-near"]
 
 [workspace.package]
 version = "0.1.0"

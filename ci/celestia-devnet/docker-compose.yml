@@ -1,0 +1,72 @@
+# Single-validator Celestia devnet for chain-tlog end-to-end tests.
+#
+#   docker compose -f ci/celestia-devnet/docker-compose.yml up -d --wait
+#   docker compose -f ci/celestia-devnet/docker-compose.yml down -v
+#
+# - validator: celestia-app, 500 ms blocks, chain id "private"
+# - node-0:    celestia-node bridge with a funded key; JSON-RPC on
+#              127.0.0.1:26658 with auth off
+#
+# Lumina light nodes in the tests find the bridge through its p2p.Info RPC
+# and dial it on the docker network, which the host can reach on Linux.
+#
+# Stock images, scripts mounted in, no docker build. Adapted from
+# eigerco/lumina ci/ (tag lumina-node-v1.3.0), Apache-2.0. Keep the image
+# versions in step with the celestia-* and lumina-* crate versions.
+name: chain-tlog-celestia
+
+x-common: &common
+  platform: linux/amd64
+  user: "0:0"
+  volumes:
+    - ./:/opt/devnet:ro
+    - credentials:/credentials
+    - genesis:/genesis
+
+services:
+  validator:
+    <<: *common
+    image: docker.io/celestiaorg/celestia-app:v10.2.0-mocha
+    entrypoint: ["/bin/bash", "/opt/devnet/run-validator.sh"]
+    environment:
+      - NO_COLOR=1
+      - NODE_COUNT=1
+      - P2P_NETWORK=private
+    ports:
+      - 127.0.0.1:19090:9090
+      - 127.0.0.1:26657:26657
+    healthcheck:
+      test: ["CMD", "/bin/bash", "/opt/devnet/healthcheck-validator.sh"]
+      interval: 1s
+      timeout: 10s
+      start_period: 10s
+      retries: 120
+
+  node-0:
+    <<: *common
+    image: docker.io/celestiaorg/celestia-node:v0.34.2-mocha
+    entrypoint: ["/bin/bash", "/opt/devnet/run-node.sh"]
+    environment:
+      - NO_COLOR=1
+      - NODE_ID=0
+      - NODE_TYPE=bridge
+      - P2P_NETWORK=private
+      - SKIP_AUTH=true
+    ports:
+      - 127.0.0.1:26658:26658
+    depends_on:
+      validator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/bash", "/opt/devnet/healthcheck-node.sh", "3"]
+      interval: 1s
+      timeout: 10s
+      start_period: 20s
+      retries: 180
+
+volumes:
+  credentials:
+  genesis:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
