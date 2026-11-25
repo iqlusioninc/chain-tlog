@@ -1,4 +1,4 @@
-# 0002: NEAR light-client verifier
+# 0004: NEAR light-client verifier
 
 Status: proposed. Changes the threat model and fixes the NEAR proof format.
 

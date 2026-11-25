@@ -17,7 +17,7 @@
 //! which ties the layers together. RPC nodes are untrusted; every byte they
 //! return is checked.
 //!
-//! See `docs/design/0002-near-light-client.md` for the trust model and the
+//! See `docs/design/0004-near-light-client.md` for the trust model and the
 //! proof format.
 
 #![forbid(unsafe_code)]
