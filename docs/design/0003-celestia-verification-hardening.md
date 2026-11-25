@@ -1,4 +1,4 @@
-# 0002: Hardening Celestia namespace verification
+# 0003: Hardening Celestia namespace verification
 
 Status: proposed. Changes the proof format and the threat model of the Celestia backend.
 Builds on [0001](0001-independent-backends.md).
