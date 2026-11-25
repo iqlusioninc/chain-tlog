@@ -14,8 +14,8 @@ code already do, this note makes these changes:
 - **NEAR proof format adds an account check.** A NEAR observation is only valid together with
   a state proof of the account's `code_hash`, and one proof, at some height after deployment,
   that the account has no access keys (spec 6.1). The 0001 rule "deploy with no full-access
-  keys" becomes "no access keys at all", because a function-call key could still be used to
-  call a future privileged method if one were ever added.
+  keys" becomes "no access keys at all", because a proof that the
+  access-key subtree is empty is simpler to check than reading every key's permission.
 - **Records are identical per signed statement, not per byte.** The inline payload may differ
   between backends because their limits differ (spec 3.3). 0001 said byte-identical.
 - **Relayer obligations.** Records go to every backend, and retryable rejections are retried
