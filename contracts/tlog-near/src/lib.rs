@@ -21,6 +21,17 @@
 //! and unrevoked as of that block". A proof that the key is absent answers
 //! "not in the log".
 //!
+//! # Payloads
+//!
+//! An attached payload travels in the call data of the `submit` transaction
+//! and is checked against the signed `content_hash` and `content_len`. The
+//! contract keeps it in state only if it fits under `max_inline_payload`;
+//! otherwise [`StoredEntry::payload`] is [`PayloadRef::CallData`] and the
+//! bytes live in the receipt executed at `published.height`. Use
+//! [`TransparencyLog::submit_raw`] for large payloads: its arguments are the
+//! raw encoded record, so a payload can use almost all of NEAR's 1.5 MiB
+//! transaction limit. See `docs/design/0002-near-payloads-as-call-data.md`.
+//!
 //! # Authorisation
 //!
 //! Anyone may call [`TransparencyLog::submit`]: authority comes from the
@@ -40,6 +51,7 @@ use tlog_core::rules::{check, EntryMeta, LogView};
 use tlog_core::sig::SignatureVerifier;
 use tlog_core::statement::{LogConfig, Publish, Record, RevocationReason};
 use tlog_core::status::ChainTime;
+use tlog_core::Reject;
 use tlog_core::{Effect, EntryId, LogId, PublicKey, Signature};
 
 /// Trie key prefix for entries.
@@ -69,6 +81,33 @@ pub struct Revocation {
     pub revoker: PublicKey,
 }
 
+/// Where an entry's payload can be found. Part of the proof format.
+#[near(serializers = [borsh])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[borsh(use_discriminant = true)]
+#[repr(u8)]
+pub enum PayloadRef {
+    /// [`tlog_core::PayloadMode::Detached`]: only the hash was logged. The
+    /// payload was never on NEAR.
+    Detached = 0,
+    /// Stored in contract state under `b"d" ++ entry_id`. Kept by every node.
+    Inline = 1,
+    /// Carried in the call data of the receipt that executed at
+    /// `published.height`, but not stored. Regular nodes garbage-collect it
+    /// after about five epochs; archival nodes keep it.
+    CallData = 2,
+}
+
+impl PayloadRef {
+    fn as_str(self) -> &'static str {
+        match self {
+            PayloadRef::Detached => "detached",
+            PayloadRef::Inline => "inline",
+            PayloadRef::CallData => "call_data",
+        }
+    }
+}
+
 /// Value stored under `b"e" ++ entry_id`.
 #[near(serializers = [borsh])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +120,8 @@ pub struct StoredEntry {
     pub published: ChainTime,
     /// Revocation, if any.
     pub revoked: Option<Revocation>,
+    /// Where the payload is.
+    pub payload: PayloadRef,
 }
 
 /// Contract state.
@@ -127,6 +168,8 @@ pub struct EntryView {
     pub revocation_reason: Option<u8>,
     /// Whether the payload is stored inline.
     pub has_payload: bool,
+    /// `"inline"`, `"call_data"` or `"detached"`.
+    pub payload_location: String,
 }
 
 /// JSON view of the log's identity.
@@ -139,7 +182,8 @@ pub struct LogInfo {
     pub admin: String,
     /// Hex log id.
     pub log_id: String,
-    /// Inline payload limit in bytes.
+    /// Largest payload kept in contract state. Larger attached payloads are
+    /// logged but stay in call data.
     pub max_inline_payload: U64,
     /// Next registry sequence number.
     pub registry_seq: U64,
@@ -152,6 +196,10 @@ struct HostVerifier;
 impl SignatureVerifier for HostVerifier {
     fn verify(&self, key: &PublicKey, msg: &[u8], sig: &Signature) -> bool {
         env::ed25519_verify(&sig.0, msg, &key.0)
+    }
+
+    fn sha256(&self, data: &[u8]) -> [u8; 32] {
+        env::sha256_array(data)
     }
 }
 
@@ -207,24 +255,33 @@ impl TransparencyLog {
         }
     }
 
-    /// Submit an encoded [`Record`]. Panics if it fails validation.
-    /// Returns the hex entry id for publications and revocations.
+    /// Submit an encoded [`Record`] as base64 in JSON arguments. Panics if it
+    /// fails validation. Returns the hex entry id for publications and
+    /// revocations. Base64 limits payloads to about 1.1 MiB; use
+    /// [`Self::submit_raw`] for larger ones.
     pub fn submit(&mut self, record: Base64VecU8) -> Option<String> {
+        self.apply(&record.0)
+    }
+
+    /// Submit an encoded [`Record`] as the raw function-call arguments, with
+    /// no JSON or base64 wrapper. The arguments are byte-identical to the
+    /// Celestia blob. Same result as [`Self::submit`], returned as JSON.
+    pub fn submit_raw(&mut self) -> Option<String> {
+        let input = env::input().unwrap_or_default();
+        self.apply(&input)
+    }
+
+    fn apply(&mut self, bytes: &[u8]) -> Option<String> {
         let record =
-            Record::decode(&record.0).unwrap_or_else(|e| env::panic_str(&format!("malformed record: {e:?}")));
-        let effect = check(
-            &self.config,
-            &self.log_id,
-            &View(self),
-            &HostVerifier,
-            &record,
-            Some(self.max_inline_payload),
-        )
-        .unwrap_or_else(|e| env::panic_str(&format!("rejected: {e:?}")));
+            Record::decode(bytes).unwrap_or_else(|e| env::panic_str(&format!("malformed record: {e:?}")));
+        // An attached payload of any size the chain accepts is logged.
+        // `max_inline_payload` only decides whether it is stored.
+        let effect = check(&self.config, &self.log_id, &View(self), &HostVerifier, &record)
+            .unwrap_or_else(|e: Reject| env::panic_str(&format!("rejected: {e:?}")));
         let t = now();
 
         match effect {
-            Effect::Published { entry_id, publish, payload } => {
+            Effect::Published { entry_id, publish } => {
                 let seq = self.next_seq;
                 self.next_seq += 1;
                 emit(
@@ -235,10 +292,16 @@ impl TransparencyLog {
                         publish.publisher
                     ),
                 );
-                if let Some(p) = payload {
-                    self.payloads.insert(entry_id, p);
-                }
-                self.entries.insert(entry_id, StoredEntry { publish, seq, published: t, revoked: None });
+                let payload = match record.payload {
+                    None => PayloadRef::Detached,
+                    Some(p) if p.len() as u64 <= self.max_inline_payload => {
+                        self.payloads.insert(entry_id, p);
+                        PayloadRef::Inline
+                    }
+                    Some(_) => PayloadRef::CallData,
+                };
+                self.entries
+                    .insert(entry_id, StoredEntry { publish, seq, published: t, revoked: None, payload });
                 Some(entry_id.to_hex())
             }
             Effect::Revoked { entry_id, reason, revoker } => {
@@ -282,7 +345,8 @@ impl TransparencyLog {
             status: if e.revoked.is_some() { "revoked" } else { "active" }.into(),
             revoked_height: e.revoked.as_ref().map(|r| U64(r.at.height)),
             revocation_reason: e.revoked.as_ref().map(|r| r.reason as u8),
-            has_payload: self.payloads.contains_key(&id),
+            has_payload: e.payload == PayloadRef::Inline,
+            payload_location: e.payload.as_str().into(),
         })
     }
 
@@ -318,6 +382,7 @@ mod tests {
     use near_sdk::testing_env;
     use tlog_core::hash::sha256;
     use tlog_core::statement::{RegistryOp, RegistryUpdate, Revoke, SignedStatement, Statement};
+    use tlog_core::PayloadMode;
 
     fn key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
@@ -327,9 +392,21 @@ mod tests {
         PublicKey(k.verifying_key().to_bytes())
     }
 
-    fn rec(k: &SigningKey, statement: Statement, payload: Option<Vec<u8>>) -> Base64VecU8 {
+    fn raw(k: &SigningKey, statement: Statement, payload: Option<Vec<u8>>) -> Vec<u8> {
         let signature = Signature(k.sign(&statement.signing_bytes()).to_bytes());
-        Base64VecU8(Record { signed: SignedStatement { statement, signature }, payload }.encode())
+        Record { signed: SignedStatement { statement, signature }, payload }.encode()
+    }
+
+    fn rec(k: &SigningKey, statement: Statement, payload: Option<Vec<u8>>) -> Base64VecU8 {
+        Base64VecU8(raw(k, statement, payload))
+    }
+
+    /// Calls `submit_raw` with `input` as the function-call arguments.
+    fn submit_raw(c: &mut TransparencyLog, input: Vec<u8>) -> Option<String> {
+        let mut ctx = VMContextBuilder::new().block_height(120).block_timestamp(1_500).build();
+        ctx.input = input.into();
+        testing_env!(ctx);
+        c.submit_raw()
     }
 
     fn setup() -> (TransparencyLog, SigningKey, SigningKey) {
@@ -358,7 +435,12 @@ mod tests {
             content_hash: sha256(payload),
             content_len: payload.len() as u64,
             serial,
+            payload_mode: PayloadMode::Attached,
         }
+    }
+
+    fn detached_stmt(c: &TransparencyLog, k: &SigningKey, payload: &[u8], serial: u64) -> Publish {
+        Publish { payload_mode: PayloadMode::Detached, ..publish_stmt(c, k, payload, serial) }
     }
 
     #[test]
@@ -374,6 +456,7 @@ mod tests {
         assert_eq!(v.status, "active");
         assert_eq!(v.published_height, U64(100));
         assert!(v.has_payload);
+        assert_eq!(v.payload_location, "inline");
         assert_eq!(c.get_payload(id.clone()).unwrap().0, b"cert");
 
         testing_env!(VMContextBuilder::new().block_height(150).block_timestamp(2_000).build());
@@ -394,7 +477,7 @@ mod tests {
     #[should_panic(expected = "BadSignature")]
     fn wrong_signer_rejected() {
         let (mut c, _admin, publ) = setup();
-        let p = publish_stmt(&c, &publ, b"x", 1);
+        let p = detached_stmt(&c, &publ, b"x", 1);
         c.submit(rec(&key(9), Statement::Publish(p), None));
     }
 
@@ -402,24 +485,74 @@ mod tests {
     #[should_panic(expected = "DuplicateEntry")]
     fn duplicate_rejected() {
         let (mut c, _admin, publ) = setup();
-        let p = publish_stmt(&c, &publ, b"x", 1);
+        let p = detached_stmt(&c, &publ, b"x", 1);
         c.submit(rec(&publ, Statement::Publish(p.clone()), None));
         c.submit(rec(&publ, Statement::Publish(p), None));
     }
 
     #[test]
-    #[should_panic(expected = "PayloadTooLarge")]
-    fn payload_limit_enforced() {
+    fn large_payload_stays_in_call_data() {
         let (mut c, _admin, publ) = setup();
-        let big = vec![7u8; 2048];
+        // Over the 1 KiB inline cap: logged, hash checked, bytes not stored.
+        let big = vec![7u8; 1_400_000];
         let p = publish_stmt(&c, &publ, &big, 1);
-        c.submit(rec(&publ, Statement::Publish(p), Some(big)));
+        let id = submit_raw(&mut c, raw(&publ, Statement::Publish(p.clone()), Some(big))).unwrap();
+        assert_eq!(id, p.entry_id().to_hex());
+        let v = c.get_entry(id.clone()).unwrap();
+        assert_eq!(v.payload_location, "call_data");
+        assert_eq!(v.published_height, U64(120));
+        assert!(!v.has_payload);
+        assert!(c.get_payload(id).is_none());
+        c.entries.flush();
+        let stored: StoredEntry =
+            near_sdk::borsh::from_slice(&env::storage_read(&entry_storage_key(&p.entry_id())).unwrap())
+                .unwrap();
+        assert_eq!(stored.payload, PayloadRef::CallData);
+    }
+
+    #[test]
+    fn submit_raw_matches_submit() {
+        let (mut c, _admin, publ) = setup();
+        let p = publish_stmt(&c, &publ, b"cert", 1);
+        let id = submit_raw(&mut c, raw(&publ, Statement::Publish(p), Some(b"cert".to_vec()))).unwrap();
+        assert_eq!(c.get_entry(id).unwrap().payload_location, "inline");
+    }
+
+    #[test]
+    #[should_panic(expected = "PayloadMismatch")]
+    fn call_data_payload_must_match_hash() {
+        let (mut c, _admin, publ) = setup();
+        let big = vec![7u8; 4096];
+        let p = publish_stmt(&c, &publ, &big, 1);
+        let mut wrong = big.clone();
+        wrong[0] = 8;
+        submit_raw(&mut c, raw(&publ, Statement::Publish(p), Some(wrong)));
+    }
+
+    #[test]
+    #[should_panic(expected = "PayloadMismatch")]
+    fn stripped_payload_rejected() {
+        // Threat T5: a relayer drops the payload from an attached publication.
+        let (mut c, _admin, publ) = setup();
+        let big = vec![7u8; 4096];
+        let p = publish_stmt(&c, &publ, &big, 1);
+        c.submit(rec(&publ, Statement::Publish(p), None));
+    }
+
+    #[test]
+    fn detached_publication_logs_hash_only() {
+        let (mut c, _admin, publ) = setup();
+        let p = detached_stmt(&c, &publ, &[1u8; 10_000_000], 1);
+        let id = c.submit(rec(&publ, Statement::Publish(p), None)).unwrap();
+        let v = c.get_entry(id).unwrap();
+        assert_eq!(v.payload_location, "detached");
+        assert_eq!(v.content_len, U64(10_000_000));
     }
 
     #[test]
     fn storage_key_matches_layout() {
         let (mut c, _admin, publ) = setup();
-        let p = publish_stmt(&c, &publ, b"x", 1);
+        let p = detached_stmt(&c, &publ, b"x", 1);
         c.submit(rec(&publ, Statement::Publish(p.clone()), None));
         c.entries.flush();
         let raw = env::storage_read(&entry_storage_key(&p.entry_id())).expect("entry at documented key");

@@ -33,7 +33,7 @@ pub use rules::{check, Effect, EntryMeta, LogView, Reject};
 pub use sig::SignatureVerifier;
 pub use state::LogState;
 pub use statement::{
-    LogConfig, Publish, Record, RegistryOp, RegistryUpdate, RevocationReason, Revoke, SignedStatement,
-    Statement,
+    LogConfig, PayloadMode, Publish, Record, RegistryOp, RegistryUpdate, RevocationReason, Revoke,
+    SignedStatement, Statement,
 };
 pub use status::{Backend, ChainTime, EntryStatus, Observation, Position};

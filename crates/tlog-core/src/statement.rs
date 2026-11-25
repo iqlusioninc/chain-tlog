@@ -45,6 +45,23 @@ pub struct Publish {
     /// Publisher-chosen value that makes otherwise identical publications
     /// distinct, for example a sequence number or timestamp.
     pub serial: u64,
+    /// Whether the payload rides in the record. Signed, so a relayer cannot
+    /// strip the payload from an `Attached` publication and get the
+    /// hash-only copy logged first (threat T5). See design note 0002.
+    pub payload_mode: PayloadMode,
+}
+
+/// Where a publication's payload lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[borsh(use_discriminant = true)]
+#[repr(u8)]
+pub enum PayloadMode {
+    /// The record must carry the payload. On Celestia it is in the blob; on
+    /// NEAR it is in the call data of the `submit` transaction.
+    Attached = 0,
+    /// The record must not carry the payload. Only the hash is logged and
+    /// the payload is distributed some other way.
+    Detached = 1,
 }
 
 impl Publish {
@@ -168,8 +185,9 @@ pub struct SignedStatement {
 pub struct Record {
     /// The signed statement.
     pub signed: SignedStatement,
-    /// Inline payload. Only allowed on [`Statement::Publish`], and must match
-    /// its `content_hash` and `content_len`.
+    /// Payload. Required on a [`PayloadMode::Attached`] publish, where it
+    /// must match `content_hash` and `content_len`, and forbidden everywhere
+    /// else.
     pub payload: Option<Vec<u8>>,
 }
 
@@ -196,13 +214,24 @@ impl Record {
         borsh::from_slice(body).map_err(|_| DecodeError::Malformed)
     }
 
-    /// True if the inline payload matches the publish statement it rides on.
+    /// True if the attached payload agrees with the statement: present and
+    /// matching `content_hash`/`content_len` for an [`PayloadMode::Attached`]
+    /// publication, absent otherwise.
     pub fn payload_matches(&self) -> bool {
+        self.payload_matches_with(sha256)
+    }
+
+    /// [`Self::payload_matches`] with a caller-supplied SHA-256, so a
+    /// backend can use a cheaper implementation.
+    pub fn payload_matches_with(&self, sha256: impl Fn(&[u8]) -> [u8; 32]) -> bool {
         match (&self.signed.statement, &self.payload) {
-            (_, None) => true,
             (Statement::Publish(p), Some(data)) => {
-                data.len() as u64 == p.content_len && sha256(data) == p.content_hash
+                p.payload_mode == PayloadMode::Attached
+                    && data.len() as u64 == p.content_len
+                    && sha256(data) == p.content_hash
             }
+            (Statement::Publish(p), None) => p.payload_mode == PayloadMode::Detached,
+            (_, None) => true,
             (_, Some(_)) => false,
         }
     }
@@ -238,7 +267,18 @@ pub(crate) mod test_support {
             content_hash: sha256(payload),
             content_len: payload.len() as u64,
             serial,
+            payload_mode: PayloadMode::Attached,
         }
+    }
+
+    pub fn publish_detached(
+        log_id: LogId,
+        k: &SigningKey,
+        subject: &str,
+        payload: &[u8],
+        serial: u64,
+    ) -> Publish {
+        Publish { payload_mode: PayloadMode::Detached, ..publish(log_id, k, subject, payload, serial) }
     }
 }
 
@@ -262,6 +302,18 @@ mod tests {
         trailing.push(0);
         assert_eq!(Record::decode(&trailing), Err(DecodeError::Malformed));
         assert_eq!(Record::decode(&bytes[1..]), Err(DecodeError::BadMagic));
+    }
+
+    #[test]
+    fn payload_mode_is_enforced() {
+        let cfg = LogConfig { name: "t".into(), admin: pk(&key(1)) };
+        let att = publish(cfg.log_id(), &key(2), "s", b"x", 1);
+        // Stripping the payload from an attached publication is detectable.
+        assert!(!record(&key(2), Statement::Publish(att.clone()), None).payload_matches());
+        assert!(record(&key(2), Statement::Publish(att), Some(b"x".to_vec())).payload_matches());
+        let det = publish_detached(cfg.log_id(), &key(2), "s", b"x", 1);
+        assert!(record(&key(2), Statement::Publish(det.clone()), None).payload_matches());
+        assert!(!record(&key(2), Statement::Publish(det), Some(b"x".to_vec())).payload_matches());
     }
 
     #[test]

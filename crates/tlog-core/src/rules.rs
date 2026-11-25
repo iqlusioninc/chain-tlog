@@ -40,10 +40,10 @@ pub enum Effect {
     Published {
         /// Its id.
         entry_id: EntryId,
-        /// The statement.
+        /// The statement. The payload, if attached, has been checked against
+        /// it and is still in the record; it isn't copied here, because
+        /// copying a 1.5 MiB payload costs real gas on NEAR.
         publish: Publish,
-        /// Inline payload, if one was attached.
-        payload: Option<Vec<u8>>,
     },
     /// Mark an entry revoked.
     Revoked {
@@ -106,26 +106,20 @@ pub enum Reject {
     /// Payload attached to a non-publish statement, or it does not match
     /// the statement's hash and length.
     PayloadMismatch,
-    /// Inline payload exceeds this backend's limit.
-    PayloadTooLarge {
-        /// Backend limit in bytes.
-        limit: u64,
-        /// Payload size.
-        got: u64,
-    },
 }
 
 /// Validate `record` against backend state.
 ///
-/// `max_inline_payload` is the backend's limit on inline payload size, or
-/// `None` for no limit beyond the backend's own transaction limits.
+/// There is no payload size limit here. Each chain enforces its own
+/// (NEAR's transaction size, Celestia's blob size), and a backend that
+/// stores payloads decides separately what to keep. Rejecting on size here
+/// would make the rules differ between backends.
 pub fn check(
     config: &LogConfig,
     log_id: &LogId,
     view: &impl LogView,
     sigv: &impl SignatureVerifier,
     record: &Record,
-    max_inline_payload: Option<u64>,
 ) -> Result<Effect, Reject> {
     let st = &record.signed.statement;
 
@@ -137,13 +131,8 @@ pub fn check(
         return Err(Reject::BadSignature);
     }
 
-    if !record.payload_matches() {
+    if !record.payload_matches_with(|d| sigv.sha256(d)) {
         return Err(Reject::PayloadMismatch);
-    }
-    if let (Some(limit), Some(p)) = (max_inline_payload, &record.payload) {
-        if p.len() as u64 > limit {
-            return Err(Reject::PayloadTooLarge { limit, got: p.len() as u64 });
-        }
     }
 
     match st {
@@ -155,7 +144,7 @@ pub fn check(
             if view.entry(&entry_id).is_some() {
                 return Err(Reject::DuplicateEntry);
             }
-            Ok(Effect::Published { entry_id, publish: p.clone(), payload: record.payload.clone() })
+            Ok(Effect::Published { entry_id, publish: p.clone() })
         }
         Statement::Revoke(r) => {
             let meta = view.entry(&r.entry_id).ok_or(Reject::UnknownEntry)?;

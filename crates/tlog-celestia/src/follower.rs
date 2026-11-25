@@ -62,7 +62,7 @@ impl NamespaceFollower {
     /// New follower for the log defined by `config`, in `namespace`,
     /// starting at `start_height`.
     pub fn new(config: LogConfig, namespace: Namespace, start_height: u64) -> Self {
-        Self { state: LogState::new(config, None), namespace, next_height: start_height, head: None }
+        Self { state: LogState::new(config), namespace, next_height: start_height, head: None }
     }
 
     /// The namespace followed.
@@ -134,7 +134,8 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use tlog_core::hash::sha256;
     use tlog_core::statement::{
-        Publish, RegistryOp, RegistryUpdate, RevocationReason, Revoke, SignedStatement, Statement,
+        PayloadMode, Publish, RegistryOp, RegistryUpdate, RevocationReason, Revoke, SignedStatement,
+        Statement,
     };
     use tlog_core::{EntryStatus, PublicKey, Signature};
 
@@ -181,6 +182,7 @@ mod tests {
             content_hash: sha256(&body),
             content_len: body.len() as u64,
             serial: 1,
+            payload_mode: PayloadMode::Attached,
         };
         let id = p.entry_id();
         let publish = rec(&publ, Statement::Publish(p), Some(body));

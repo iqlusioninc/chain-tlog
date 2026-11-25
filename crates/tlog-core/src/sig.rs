@@ -7,6 +7,13 @@ use crate::{PublicKey, Signature};
 pub trait SignatureVerifier {
     /// Returns true if `sig` is a valid signature by `key` over `msg`.
     fn verify(&self, key: &PublicKey, msg: &[u8], sig: &Signature) -> bool;
+
+    /// Plain SHA-256, used to check payloads against `content_hash`. The
+    /// NEAR contract overrides this with the host function, which costs
+    /// several times less gas than hashing in Wasm.
+    fn sha256(&self, data: &[u8]) -> [u8; 32] {
+        crate::hash::sha256(data)
+    }
 }
 
 /// ed25519-dalek verifier.
