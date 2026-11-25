@@ -15,6 +15,8 @@ first.
 | `crates/tlog-core` | Record format, ids, validation rules shared by both backends, in-memory log fold, verdict policy for one or both backends |
 | `contracts/tlog-near` | NEAR contract: `submit(record)`, entry and payload views, NEP-297 events |
 | `crates/tlog-celestia` | Namespace follower and sync loop; `lumina` feature: verified source on a Lumina light node; `rpc` feature: publisher over celestia-node RPC |
+| `crates/tlog-e2e` | End-to-end tests on a NEAR sandbox and a local Celestia devnet, for NEAR-only, Celestia-only and both-chains users |
+| `ci/celestia-devnet` | Docker Compose devnet: one celestia-app validator, one celestia-node bridge |
 
 ## Build and test
 
@@ -25,9 +27,15 @@ cargo check -p tlog-celestia --features rpc,lumina
 # Contract wasm (use cargo-near for deployable, reproducible builds)
 rustup target add wasm32-unknown-unknown
 cargo build -p tlog-near --target wasm32-unknown-unknown --release
+
+# End-to-end, against a NEAR sandbox and a local Celestia devnet
+docker compose -f ci/celestia-devnet/docker-compose.yml up -d --wait
+cargo test -p tlog-e2e -- --ignored --test-threads=1
 ```
+
+See [crates/tlog-e2e/README.md](crates/tlog-e2e/README.md) for what the end-to-end tests
+cover and how to plug new verifiers into them.
 
 ## Status
 
-Early scaffold. The NEAR light-client verifier, the CLIs and end-to-end tests against live
-networks are not written yet. See the design note's "Not done yet" section.
+Early scaffold. The NEAR light-client verifier and the CLIs are not written yet. See the design note's "Not done yet" section.

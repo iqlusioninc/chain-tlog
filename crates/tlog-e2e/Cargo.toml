@@ -1,0 +1,23 @@
+[package]
+name = "tlog-e2e"
+description = "End-to-end harness for chain-tlog: NEAR sandbox, local Celestia devnet, light-client verifiers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+tlog-core = { workspace = true, features = ["dalek"] }
+tlog-celestia = { path = "../tlog-celestia", features = ["lumina", "rpc"] }
+ed25519-dalek = { workspace = true, features = ["std"] }
+celestia-types.workspace = true
+celestia-rpc.workspace = true
+lumina-node.workspace = true
+multiaddr = "0.19"
+near-workspaces = "0.24"
+anyhow = "1"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
