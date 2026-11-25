@@ -5,8 +5,8 @@ namespace. Each one is a complete log on its own, covering publication, revocati
 publisher registry. A log user picks one or both as authoritative, and verifiers check them
 with light clients instead of trusting a log operator.
 
-Read [docs/design/0001-independent-backends.md](docs/design/0001-independent-backends.md)
-first.
+Read [docs/spec.md](docs/spec.md) and [docs/threat-model.md](docs/threat-model.md) first.
+Design decisions are in [docs/design/](docs/design/).
 
 ## Layout
 
