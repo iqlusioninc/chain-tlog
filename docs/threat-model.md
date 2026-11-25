@@ -129,10 +129,11 @@ out of the sampling window (A2).
 ### T7 NEAR contract or account takeover
 Whoever controls the contract account can redeploy code or write storage directly, rewriting
 the log.
-*Stopped by* A9: no access keys, no upgrade method, and verifiers check `code_hash` in every
-state proof and the empty access-key set once (spec 6.1).
-*Residual:* NEAR protocol-level changes (a hard fork that edits state) are part of A4. Until
-the light-client verifier implements the checks, A9 is unverified.
+*Stopped by* A9: no access keys and no upgrade method. Verifiers should check `code_hash` in
+every observation and the empty access-key set once (spec 6.1).
+*Residual:* stock NEAR RPC serves no proofs for the account record or access keys, so until a
+proof source exists, A9 is trusted from the deployment rather than checked. NEAR
+protocol-level changes (a hard fork that edits state) are part of A4.
 
 ### T8 Namespace or contract spam
 Anyone can post blobs into the namespace or call `submit`.
@@ -191,6 +192,16 @@ Timestamps feed `max_head_age` and `mirror_grace`.
 *Impact:* a producer can make a head look slightly fresher, or a publication slightly newer, by
 the protocol's allowed drift. A majority could do more, but that is T12.
 *Mitigation:* pick `max_head_age` and `mirror_grace` well above allowed drift.
+
+### T17 NEAR missing-chunk lag
+When a NEAR block has no new chunk for the contract's shard, its state root is from before the
+shard's previous chunk, so a proof at a fresh block can miss that chunk's effects (spec 6.1).
+*Impact:* a revocation executed in the shard's latest chunk can read as `Active` until the
+shard's next chunk. Chunk producers who keep withholding the shard's chunks stretch this out.
+A `Revoked` answer is never wrong.
+*Mitigation:* take the observation's `head` from the last block with a new chunk for the shard,
+which needs full-header verification (open, spec 10). Under `Both`, the Celestia observation
+still shows the revocation.
 
 ### T15 Signature malleability and verifier differences
 Different Ed25519 rules on the two backends could make a record valid on one only.

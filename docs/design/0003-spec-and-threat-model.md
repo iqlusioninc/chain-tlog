@@ -11,9 +11,11 @@ code already do, this note makes these changes:
 - **Log descriptor.** Verifiers get a descriptor out of band with the NEAR account and its
   expected `code_hash`, the Celestia namespace and start height, and default policy values
   (spec 2). The descriptor is now an explicit trust input (A7).
-- **NEAR proof format adds an account check.** A NEAR observation is only valid together with
-  a state proof of the account's `code_hash`, and one proof, at some height after deployment,
-  that the account has no access keys (spec 6.1). The 0001 rule "deploy with no full-access
+- **NEAR proof format adds shard binding and an account check.** A NEAR proof must include the
+  contract's `STATE` key with the expected `log_id`. Verifiers should also prove the account's
+  `code_hash`, and once that it has no access keys, but stock RPC cannot serve those proofs
+  yet, so they are SHOULD until a proof source exists (spec 6.1).
+- **NEAR freshness.** A missing chunk makes a proof lag its block; this is threat T17. The 0001 rule "deploy with no full-access
   keys" becomes "no access keys at all", because a proof that the
   access-key subtree is empty is simpler to check than reading every key's permission.
 - **Payload size in a two-backend log.** With `payload_mode` from 0002, records are

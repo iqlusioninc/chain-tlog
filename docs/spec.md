@@ -240,16 +240,34 @@ One proof answers all three. To observe `entry_id` at a verified block `B`:
 2. The verifier obtains a state proof for `ContractData { account_id, "e" || entry_id }` from
    any RPC node (`view_state` with `include_proof`), and checks it against `B`'s state root:
    trie proof to the shard's state root, then that shard root against the header's
-   `prev_state_root`. The state proven is the state after the block preceding `B`.
-3. If the key is present, its value decodes to `StoredEntry`, and `revoked` gives the status.
+   `prev_state_root`.
+3. **Shard binding.** The same proof MUST also contain the contract's `STATE` key, decoding to
+   a state with the expected `log_id`. A proof against the wrong shard then fails instead of
+   reading as `Absent`.
+4. If the key is present, its value decodes to `StoredEntry`, and `revoked` gives the status.
    If the proof shows the key absent, the status is `Absent`.
-4. The verifier also checks, against the same state root, that the account's `code_hash`
-   equals the descriptor's `code_hash`.
+5. The verifier SHOULD also check, against the same state root, that the account's
+   `code_hash` equals the descriptor's `code_hash`, and once per verifier that the account's
+   access-key subtree is empty. Because a locked account cannot add keys, the access-key check
+   only has to hold at one verified height after deployment.
 
-Checking the account lock (no access keys) needs a proof that the account's access-key subtree
-is empty. Because a locked account cannot add keys, this only has to hold at one verified
-height after deployment. Verifiers SHOULD check it once and record the height. How to produce
-that proof from NEAR RPC is an open item for the NEAR light-client work.
+**What height the proof is at.** The shard root in `B` comes from the chunk header `B`
+carries for that shard. When the shard's chunk is new in `B`, the proven state is the state
+after the block before `B`. When the chunk is missing, `B` repeats an older chunk header, and
+the proven state is from before that older chunk was applied, so it lags `B` by the run of
+missing chunks plus one chunk. A `Revoked` answer is always sound. `Active` and `Absent` can
+miss the effects of the shard's latest chunk until the next chunk appears. Until the verifier
+checks the full header (where `chunk_headers_root` lives) and takes `head` from the chunk's
+own height, it MUST use the time of the last block whose chunk for that shard was new, if it
+can tell, and otherwise accept this lag as a residual (threat model T17).
+
+**Proof sources.** Stock NEAR RPC returns proofs only for contract data, through unpaginated
+`view_state`, which refuses accounts over `trie_viewer_state_size_limit` (50,000 bytes by
+default). It returns no proofs for the account record (`code_hash`) or the access-key subtree.
+A NEAR verifier therefore needs a proof source: an RPC node with a raised limit, or a small
+service that records the trie nodes read for those keys. The proofs are still checked against
+verified headers, so the source is not trusted. Until such a source exists, the step 5 checks
+cannot run and the account lock (A9) is an assumption, not something verifiers check.
 
 Payload retrieval depends on `StoredEntry.payload`: `Inline` bytes are proven with a state
 proof of `"d" || entry_id`; `CallData` bytes are fetched from the receipt at
@@ -257,10 +275,7 @@ proof of `"d" || entry_id`; `CallData` bytes are fetched from the receipt at
 against `content_hash`, which is already in proven state, so no transaction or outcome proof is
 needed; `Detached` payloads were never on NEAR.
 
-**RPC limit.** nearcore serves proofs only from unpaginated `view_state`, which refuses
-accounts whose state exceeds `trie_viewer_state_size_limit` (50,000 bytes by default). A busy
-log passes that quickly, so a NEAR verifier needs an RPC node with a raised limit or its own
-node. This is a deployment requirement, not a trust assumption: the proofs are still checked.
+
 
 Execution-outcome proofs (`light_client_proof` for the `submit` receipt) prove that a record
 was accepted at some point, but not that the entry is unrevoked now. They are not sufficient
@@ -434,8 +449,9 @@ These are differences between this spec and the code in PR #1, or gaps the spec 
 
 1. **No `LogDescriptor` type.** Verifiers have no single place for account id, code hash,
    namespace, start height and policy defaults.
-2. **NEAR light-client verifier.** Header sync, state-proof verification, `code_hash` check and
-   the one-time access-key check (section 6.1).
+2. **NEAR light-client verifier.** Header sync and state-proof verification are in progress.
+   Still open: a proof source for `code_hash` and access keys, and full-header checks that
+   remove the missing-chunk lag (section 6.1).
 3. **Signature test vectors** across the NEAR host function and `Ed25519Dalek` (section 4.1).
 4. **Weak keys.** Reject small-order and non-canonical keys in `check` for `AddPublisher` (and
    in `LogConfig` creation), rather than relying on the admin.
