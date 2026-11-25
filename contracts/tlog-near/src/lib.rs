@@ -197,6 +197,10 @@ impl SignatureVerifier for HostVerifier {
     fn verify(&self, key: &PublicKey, msg: &[u8], sig: &Signature) -> bool {
         env::ed25519_verify(&sig.0, msg, &key.0)
     }
+
+    fn sha256(&self, data: &[u8]) -> [u8; 32] {
+        env::sha256_array(data)
+    }
 }
 
 struct View<'a>(&'a TransparencyLog);
@@ -277,7 +281,7 @@ impl TransparencyLog {
         let t = now();
 
         match effect {
-            Effect::Published { entry_id, publish, payload } => {
+            Effect::Published { entry_id, publish } => {
                 let seq = self.next_seq;
                 self.next_seq += 1;
                 emit(
@@ -288,7 +292,7 @@ impl TransparencyLog {
                         publish.publisher
                     ),
                 );
-                let payload = match payload {
+                let payload = match record.payload {
                     None => PayloadRef::Detached,
                     Some(p) if p.len() as u64 <= self.max_inline_payload => {
                         self.payloads.insert(entry_id, p);

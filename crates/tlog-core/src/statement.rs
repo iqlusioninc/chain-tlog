@@ -218,6 +218,12 @@ impl Record {
     /// matching `content_hash`/`content_len` for an [`PayloadMode::Attached`]
     /// publication, absent otherwise.
     pub fn payload_matches(&self) -> bool {
+        self.payload_matches_with(sha256)
+    }
+
+    /// [`Self::payload_matches`] with a caller-supplied SHA-256, so a
+    /// backend can use a cheaper implementation.
+    pub fn payload_matches_with(&self, sha256: impl Fn(&[u8]) -> [u8; 32]) -> bool {
         match (&self.signed.statement, &self.payload) {
             (Statement::Publish(p), Some(data)) => {
                 p.payload_mode == PayloadMode::Attached

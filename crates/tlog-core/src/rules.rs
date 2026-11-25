@@ -40,10 +40,10 @@ pub enum Effect {
     Published {
         /// Its id.
         entry_id: EntryId,
-        /// The statement.
+        /// The statement. The payload, if attached, has been checked against
+        /// it and is still in the record; it isn't copied here, because
+        /// copying a 1.5 MiB payload costs real gas on NEAR.
         publish: Publish,
-        /// Inline payload, if one was attached.
-        payload: Option<Vec<u8>>,
     },
     /// Mark an entry revoked.
     Revoked {
@@ -131,7 +131,7 @@ pub fn check(
         return Err(Reject::BadSignature);
     }
 
-    if !record.payload_matches() {
+    if !record.payload_matches_with(|d| sigv.sha256(d)) {
         return Err(Reject::PayloadMismatch);
     }
 
@@ -144,7 +144,7 @@ pub fn check(
             if view.entry(&entry_id).is_some() {
                 return Err(Reject::DuplicateEntry);
             }
-            Ok(Effect::Published { entry_id, publish: p.clone(), payload: record.payload.clone() })
+            Ok(Effect::Published { entry_id, publish: p.clone() })
         }
         Statement::Revoke(r) => {
             let meta = view.entry(&r.entry_id).ok_or(Reject::UnknownEntry)?;

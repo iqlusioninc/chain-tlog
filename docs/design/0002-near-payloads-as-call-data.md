@@ -18,12 +18,12 @@ base64 wrapper. A payload up to one NEAR transaction can be logged this way, abo
 ## Options compared
 
 Numbers are from nearcore `master` `core/parameters/res/runtime_configs/parameters.yaml`, the
-NEAR docs, and nearcore's client config, as of 2026-11-25. Gas figures are estimates from
-those parameters, not measurements.
+NEAR docs, and nearcore's client config, as of 2026-11-25. Call-data gas was measured in a
+near-sandbox (2.14.1) with `submit_raw`; see "Gas" below.
 
 | Option | Size limit | Cost for 1 MiB | Who can serve it later | What a light client proves |
 |---|---|---|---|---|
-| **Call data, one tx** | 1,572,864-byte tx (`max_transaction_size`, protocol 69+), so about 1.5 MiB of payload | Gas only, about 15 to 40 Tgas, so under 0.005 NEAR at the gas-price floor. Burned. | Any RPC node for about 36 h (5 epochs), then archival nodes or indexers only | State proof of the entry gives hash and status. Bytes from any source are checked against the hash. |
+| **Call data, one tx** | 1,572,864-byte tx (`max_transaction_size`, protocol 69+), so about 1.5 MiB of payload | Gas only, about 129 Tgas measured, so about 0.013 NEAR at the gas-price floor. Burned. Expected to drop with host hashing, see below. | Any RPC node for about 36 h (5 epochs), then archival nodes or indexers only | State proof of the entry gives hash and status. Bytes from any source are checked against the hash. |
 | Contract storage | Same tx limit per write. 4 MiB per value. | 10 NEAR locked (`storage_amount_per_byte` = 10^19 yN, so 1 NEAR per 100 KB). Refundable on delete. | Every node, forever | Direct state proof of the bytes, but see the 50 KB view limit below |
 | Chunked storage | No hard limit. Many txs. | 10 NEAR per MiB locked, plus a tx per chunk | Every node, forever | State proofs per chunk, plus a commitment that binds the chunks |
 | NEAR DA blob store | Same as call data. Larger blobs span several txs. | Same as call data | Same as call data: its README says the blob is "not stored in the blockchain state" and is pruned after "at least 3 NEAR epochs" | Commitment is a set of tx IDs, checked by tx outcome proofs |
@@ -93,6 +93,19 @@ Mitigations, in order of strength:
 **Flag:** this does not break "payloads are too large to store on NEAR". It weakens what
 "NEAR-only" means for availability, and it adds a duty to keep payloads that the project didn't
 have before.
+
+## Gas
+
+Measured in near-sandbox 2.14.1 at commit ca1ff67, which hashed the payload in Wasm with the
+`sha2` crate: 1 KiB took 2.6 Tgas, 256 KiB took 33.9 Tgas, 1 MiB took 128.7 Tgas, and a
+1,468,006-byte payload took 185 Tgas. That's about 126 Mgas per payload byte. Converting the
+transaction to a receipt cost only 3.6 Tgas at 1.4 MiB. Nearly all the rest was Wasm execution.
+A 1,540,194-byte argument transaction was accepted.
+
+The contract now hashes payloads with the `sha256` host function (`SignatureVerifier::sha256`,
+which falls back to `sha2` off-chain), and `check` no longer copies the payload into the
+`Effect`. The host function's per-byte cost is 24.1 Mgas. These numbers need to be measured
+again. The worst case already fits: 185 Tgas is under the 1 PGas transaction limit.
 
 ## Limits
 
