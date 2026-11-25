@@ -1,5 +1,6 @@
 //! Folding a namespace into log state.
 
+use celestia_types::consts::appconsts;
 use celestia_types::nmt::Namespace;
 use celestia_types::Blob;
 use tlog_core::sig::Ed25519Dalek;
@@ -8,9 +9,17 @@ use tlog_core::statement::{DecodeError, LogConfig, Record};
 use tlog_core::status::{Backend, ChainTime, Observation, Position};
 use tlog_core::{Effect, EntryId, LogState, Reject};
 
+use crate::proof::NamespaceItem;
+
 /// Why a blob in the namespace did not change the log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rejection {
+    /// Share sequence that did not parse as a blob.
+    Unparseable(String),
+    /// Blob with a share version other than 0 or 1. Version 2 (Fibre)
+    /// blobs carry a commitment to data held off the square, so they would
+    /// not give the data availability a log record needs.
+    UnsupportedShareVersion(u8),
     /// Not a record.
     Decode(DecodeError),
     /// A record that failed validation.
@@ -43,6 +52,14 @@ pub enum FollowError {
     /// A blob from another namespace was passed in.
     #[error("blob from a different namespace")]
     WrongNamespace,
+    /// Header time did not increase. Staleness checks rely on it.
+    #[error("header time at height {} is not after height {}", got.height, previous.height)]
+    TimeNotIncreasing {
+        /// Previous head.
+        previous: ChainTime,
+        /// Time given.
+        got: ChainTime,
+    },
 }
 
 /// Follows one log namespace from its start height.
@@ -87,16 +104,48 @@ impl NamespaceFollower {
 
     /// Ingest every blob of the namespace at `time.height`, in namespace order.
     pub fn ingest(&mut self, time: ChainTime, blobs: &[Blob]) -> Result<HeightReport, FollowError> {
+        let items: Vec<NamespaceItem> = blobs.iter().cloned().map(NamespaceItem::from).collect();
+        self.ingest_items(time, &items)
+    }
+
+    /// Ingest every share sequence of the namespace at `time.height`, in
+    /// namespace order, as returned by [`crate::proof::items_from_namespace_data`].
+    ///
+    /// The caller must have verified the items as the complete content of
+    /// the namespace at that height against a verified header.
+    pub fn ingest_items(
+        &mut self,
+        time: ChainTime,
+        items: &[NamespaceItem],
+    ) -> Result<HeightReport, FollowError> {
         if time.height != self.next_height {
             return Err(FollowError::Gap { expected: self.next_height, got: time.height });
         }
-        if blobs.iter().any(|b| b.namespace != self.namespace) {
+        if items.iter().any(|i| matches!(i, NamespaceItem::Blob(b) if b.namespace != self.namespace)) {
             return Err(FollowError::WrongNamespace);
+        }
+        if let Some(head) = self.head {
+            // Celestia header times strictly increase. A source that breaks
+            // this is not serving verified headers.
+            if time.unix_ns <= head.unix_ns {
+                return Err(FollowError::TimeNotIncreasing { previous: head, got: time });
+            }
         }
 
         let mut report = HeightReport { height: time.height, ..Default::default() };
-        for (i, blob) in blobs.iter().enumerate() {
+        for (i, item) in items.iter().enumerate() {
             let pos = Position { height: time.height, index: i as u64 };
+            let blob = match item {
+                NamespaceItem::Blob(b) => b,
+                NamespaceItem::Unparseable { reason } => {
+                    report.rejected.push((pos, Rejection::Unparseable(reason.clone())));
+                    continue;
+                }
+            };
+            if !matches!(blob.share_version, appconsts::SHARE_VERSION_ZERO | appconsts::SHARE_VERSION_ONE) {
+                report.rejected.push((pos, Rejection::UnsupportedShareVersion(blob.share_version)));
+                continue;
+            }
             let record = match Record::decode(&blob.data) {
                 Ok(r) => r,
                 Err(e) => {

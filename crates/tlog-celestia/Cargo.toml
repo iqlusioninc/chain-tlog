@@ -11,7 +11,7 @@ default = []
 # Publish records through a celestia-node RPC endpoint.
 rpc = ["dep:celestia-rpc"]
 # Verify through an embedded Lumina light node.
-lumina = ["dep:lumina-node", "dep:blockstore"]
+lumina = ["dep:lumina-node", "dep:blockstore", "dep:rand"]
 
 [dependencies]
 tlog-core = { workspace = true, features = ["dalek"] }
@@ -19,8 +19,13 @@ celestia-types.workspace = true
 celestia-rpc = { workspace = true, optional = true }
 lumina-node = { workspace = true, optional = true }
 blockstore = { version = "0.8", optional = true }
+rand = { version = "0.8", optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true, features = ["std"] }
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[[test]]
+name = "devnet"
+required-features = ["rpc", "lumina"]
