@@ -270,9 +270,9 @@ impl TransparencyLog {
     fn apply(&mut self, bytes: &[u8]) -> Option<String> {
         let record =
             Record::decode(bytes).unwrap_or_else(|e| env::panic_str(&format!("malformed record: {e:?}")));
-        // No inline cap here: an attached payload of any size the chain
-        // accepts is logged, and the cap only decides whether it is stored.
-        let effect = check(&self.config, &self.log_id, &View(self), &HostVerifier, &record, None)
+        // An attached payload of any size the chain accepts is logged.
+        // `max_inline_payload` only decides whether it is stored.
+        let effect = check(&self.config, &self.log_id, &View(self), &HostVerifier, &record)
             .unwrap_or_else(|e: Reject| env::panic_str(&format!("rejected: {e:?}")));
         let t = now();
 

@@ -62,7 +62,7 @@ impl NamespaceFollower {
     /// New follower for the log defined by `config`, in `namespace`,
     /// starting at `start_height`.
     pub fn new(config: LogConfig, namespace: Namespace, start_height: u64) -> Self {
-        Self { state: LogState::new(config, None), namespace, next_height: start_height, head: None }
+        Self { state: LogState::new(config), namespace, next_height: start_height, head: None }
     }
 
     /// The namespace followed.

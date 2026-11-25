@@ -44,7 +44,6 @@ pub enum ApplyError {
 pub struct LogState {
     config: LogConfig,
     log_id: LogId,
-    max_inline_payload: Option<u64>,
     publishers: BTreeMap<PublicKey, String>,
     registry_seq: u64,
     entries: BTreeMap<EntryId, StoredEntry>,
@@ -53,12 +52,11 @@ pub struct LogState {
 
 impl LogState {
     /// Empty log. No publishers until the admin adds some.
-    pub fn new(config: LogConfig, max_inline_payload: Option<u64>) -> Self {
+    pub fn new(config: LogConfig) -> Self {
         let log_id = config.log_id();
         Self {
             config,
             log_id,
-            max_inline_payload,
             publishers: BTreeMap::new(),
             registry_seq: 0,
             entries: BTreeMap::new(),
@@ -125,8 +123,7 @@ impl LogState {
         }
         self.last = Some(position);
 
-        let effect = check(&self.config, &self.log_id, self, sigv, record, self.max_inline_payload)
-            .map_err(ApplyError::Rejected)?;
+        let effect = check(&self.config, &self.log_id, self, sigv, record).map_err(ApplyError::Rejected)?;
 
         match &effect {
             Effect::Published { entry_id, publish, .. } => {
@@ -186,7 +183,7 @@ mod tests {
         fn new() -> Self {
             let admin = key(1);
             let cfg = LogConfig { name: "test".into(), admin: pk(&admin) };
-            Self { st: LogState::new(cfg, Some(1024)), admin, publ: key(2), h: 0 }
+            Self { st: LogState::new(cfg), admin, publ: key(2), h: 0 }
         }
 
         fn id(&self) -> LogId {
@@ -300,13 +297,6 @@ mod tests {
             rejected(f.apply(&record(&publ, Statement::Publish(p2), Some(b"y".to_vec())))),
             Reject::PayloadMismatch
         );
-
-        let big = vec![0u8; 2048];
-        let p3 = publish(f.id(), &publ, "s", &big, 3);
-        assert!(matches!(
-            rejected(f.apply(&record(&publ, Statement::Publish(p3), Some(big)))),
-            Reject::PayloadTooLarge { .. }
-        ));
     }
 
     #[test]

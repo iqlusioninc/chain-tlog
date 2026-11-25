@@ -49,9 +49,12 @@ retention, covered below.
 1. Prove the entry with a state proof of `b"e" ++ entry_id` against a light-client-verified
    block, as in 0001. The value now includes `payload: PayloadRef`.
 2. If `PayloadRef::Inline`, the bytes are at `b"d" ++ entry_id` and can be proven the same way.
-3. If `PayloadRef::CallData`, fetch the block at `published.height` from any source, find the
-   receipt to the log contract whose `submit_raw` arguments decode to a `Record` for this
-   `entry_id`, and check `sha256(payload) == content_hash` and `len == content_len`.
+3. If `PayloadRef::CallData`, fetch the block at `published.height` from any source and find
+   the action receipt to the log contract that created this entry. Its arguments take one of
+   two shapes. `submit_raw` arguments are the encoded `Record` itself. `submit` arguments are
+   JSON `{"record": "<base64 Record>"}`, used for payloads between `max_inline_payload` and
+   about 1.1 MiB. Decode the `Record`, check it is for this `entry_id`, and check
+   `sha256(payload) == content_hash` and `len == content_len`.
 4. If `PayloadRef::Detached`, the publisher signed a hash-only publication. The payload was
    never on NEAR.
 
@@ -98,6 +101,13 @@ have before.
   `TransactionSizeExceeded`. The contract adds no cap of its own.
 - The JSON `submit` method stays for small records. Base64 inside JSON cuts the usable size to
   about 1.1 MiB, so large payloads must use `submit_raw`.
+- A log hosted on both chains needs each `Attached` payload to fit the smaller of the two
+  limits: NEAR's transaction and Celestia's maximum blob size. A payload that fits only one
+  lands on one chain and shows up as `SplitPublication`. Publishers should check this before
+  signing, and pick `Detached` or a Celestia-only log for anything larger.
+- `rules::check` has no size limit of its own, so `Reject::PayloadTooLarge` is gone. A size
+  rule in `check` would make the two backends' rules differ. Each chain's own limit applies
+  instead.
 - Payloads larger than one transaction need chunked uploads. Chunked uploads need a content
   commitment that the contract can check one chunk at a time (for example a hash over
   fixed-size chunk hashes), which would change `content_hash` on both backends. Not done here.
